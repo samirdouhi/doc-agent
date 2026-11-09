@@ -3,43 +3,43 @@
 # DOCAGENT - OUTILS DE RECHERCHE ET DE SCRAPING
 # ============================================================
 
-# Importer DDGS pour rechercher des pages sur Internet.
+# Rechercher des pages avec DDGS.
 from ddgs import DDGS
 
-# Importer Requests pour télécharger les pages HTML.
+# Télécharger le contenu des pages web.
 import requests
 
-# Importer BeautifulSoup pour analyser le HTML.
+# Analyser le code HTML.
 from bs4 import BeautifulSoup
 
-# Importer re pour rechercher des mots dans les textes.
+# Rechercher des mots dans le texte.
 import re
 
-# Importer urlsplit pour analyser les URL.
+# Analyser les adresses URL.
 from urllib.parse import urlsplit
 
-# Importer RobotFileParser pour lire les règles robots.txt.
+# Analyser les règles robots.txt.
 from urllib.robotparser import RobotFileParser
 
-# Importer notre liste blanche depuis config.py.
+# Importer les domaines officiels autorisés.
 from src.config import OFFICIAL_SITES
 
 
-# Nom utilisé par notre programme auprès des sites web.
+# Nom de notre programme envoyé aux sites web.
 USER_AGENT = "DocAgentLearningBot/0.1"
 
 
 # ============================================================
-# 1. VÉRIFICATION DES URL OFFICIELLES
+# 1. VERIFIER LES URL OFFICIELLES
 # ============================================================
 
 def is_official_url(url, domain):
 
     try:
-        # Décomposer l'URL pour vérifier son vrai domaine.
+        # Décomposer l'adresse URL.
         parsed = urlsplit(url)
 
-        # Autoriser uniquement HTTPS et le domaine exact.
+        # Vérifier le protocole et le domaine exact.
         return (
             parsed.scheme == "https"
             and parsed.hostname == domain
@@ -54,7 +54,7 @@ def is_official_url(url, domain):
 
 
 # ============================================================
-# 2. RECHERCHE DES PAGES OFFICIELLES AVEC DDGS
+# 2. RECHERCHER LES DOCUMENTATIONS OFFICIELLES
 # ============================================================
 
 def search_docs(question, technology):
@@ -64,7 +64,7 @@ def search_docs(question, technology):
         print("Technologie non autorisée.")
         return []
 
-    # Récupérer son domaine officiel.
+    # Récupérer le domaine officiel correspondant.
     domain = OFFICIAL_SITES[technology]
 
     # Construire la requête de recherche.
@@ -73,46 +73,44 @@ def search_docs(question, technology):
     print("Recherche :", query)
 
     try:
-        # Effectuer la recherche avec DDGS.
+        # Rechercher jusqu'à 8 résultats.
         results = DDGS(timeout=10).text(
             query,
             max_results=8
         )
 
     except Exception as error:
-        # Gérer les erreurs du moteur de recherche.
+        # Gérer les erreurs de recherche.
         print("Erreur de recherche :", error)
         return []
 
-    # Préparer une liste pour les pages autorisées.
+    # Liste des résultats officiels.
     official_results = []
 
-    # Parcourir les résultats trouvés.
+    # Parcourir les résultats.
     for result in results:
 
-        # Récupérer le titre et l'URL.
         title = result.get("title", "")
         url = result.get("href", "")
 
-        # Vérifier que le domaine est officiel.
+        # Vérifier que chaque URL est autorisée.
         if is_official_url(url, domain):
 
-            # Ajouter le résultat autorisé à la liste.
+            # Ajouter le résultat à notre liste.
             official_results.append({
                 "title": title,
                 "url": url
             })
 
-        # Conserver au maximum trois pages.
+        # Limiter à trois pages officielles.
         if len(official_results) >= 3:
             break
 
-    # Retourner la liste des pages officielles.
     return official_results
 
 
 # ============================================================
-# 3. TÉLÉCHARGEMENT ET EXTRACTION DES PAGES
+# 3. TELECHARGER ET EXTRAIRE UNE PAGE
 # ============================================================
 
 def fetch_page(url):
@@ -123,24 +121,27 @@ def fetch_page(url):
         for domain in OFFICIAL_SITES.values()
     )
 
-    # Refuser les domaines non autorisés.
     if not allowed:
         print("URL non autorisée.")
         return None
 
-    # Récupérer le domaine.
+    # Récupérer le domaine de la page.
     domain = urlsplit(url).hostname
 
-    # Construire l'adresse des règles robots.txt.
+    # Construire l'URL du fichier robots.txt.
     robots_url = f"https://{domain}/robots.txt"
 
-    # Définir le User-Agent du programme.
+    # Identifier notre programme.
     headers = {
         "User-Agent": USER_AGENT
     }
 
     try:
-        # Télécharger robots.txt pour vérifier les permissions.
+
+        # ====================================================
+        # ETAPE A : VERIFIER ROBOTS.TXT
+        # ====================================================
+
         robots_response = requests.get(
             robots_url,
             headers=headers,
@@ -148,21 +149,49 @@ def fetch_page(url):
             allow_redirects=False
         )
 
-        # Refuser si les règles ne peuvent pas être vérifiées.
-        if robots_response.status_code != 200:
-            print("Impossible de vérifier robots.txt.")
+        # Récupérer le statut HTTP.
+        status = robots_response.status_code
+
+        print("Statut robots.txt :", status)
+
+        # CAS 1 : robots.txt existe.
+        if status == 200:
+
+            # Créer l'analyseur de règles.
+            robots = RobotFileParser()
+
+            # Lire les règles du site.
+            robots.parse(
+                robots_response.text.splitlines()
+            )
+
+            # Vérifier que la page est autorisée.
+            if not robots.can_fetch(USER_AGENT, url):
+                print("Accès interdit par robots.txt.")
+                return None
+
+        # CAS 2 : robots.txt est absent.
+        elif status in (404, 410):
+
+            # L'absence de robots.txt ne constitue
+            # pas une interdiction d'accès.
+            print("robots.txt absent : accès possible.")
+
+        # CAS 3 : autre statut.
+        else:
+
+            # Refuser les cas non pris en charge
+            # pour éviter un accès non vérifié.
+            print(
+                "Impossible de vérifier robots.txt.",
+                "Statut :", status
+            )
             return None
 
-        # Analyser les règles du site.
-        robots = RobotFileParser()
-        robots.parse(robots_response.text.splitlines())
+        # ====================================================
+        # ETAPE B : TELECHARGER LE HTML
+        # ====================================================
 
-        # Vérifier que la consultation est autorisée.
-        if not robots.can_fetch(USER_AGENT, url):
-            print("Accès interdit par robots.txt.")
-            return None
-
-        # Télécharger la page web.
         response = requests.get(
             url,
             headers=headers,
@@ -170,25 +199,34 @@ def fetch_page(url):
             allow_redirects=False
         )
 
-        # Refuser les redirections automatiques.
+        # Refuser les redirections non vérifiées.
         if 300 <= response.status_code < 400:
             print("Redirection refusée.")
             return None
 
-        # Vérifier les erreurs HTTP.
+        # Détecter les erreurs HTTP.
         response.raise_for_status()
 
-        # Vérifier que le serveur a retourné du HTML.
-        content_type = response.headers.get("Content-Type", "")
+        # Vérifier que le contenu est du HTML.
+        content_type = response.headers.get(
+            "Content-Type", ""
+        )
 
         if "text/html" not in content_type.lower():
             print("Le contenu n'est pas du HTML.")
             return None
 
-        # Analyser le HTML avec BeautifulSoup.
-        soup = BeautifulSoup(response.text, "html.parser")
+        # ====================================================
+        # ETAPE C : ANALYSER LE HTML
+        # ====================================================
 
-        # Trouver le titre principal.
+        # Créer un objet BeautifulSoup.
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+        # Extraire le titre principal.
         title = soup.find("h1")
 
         title_text = (
@@ -196,14 +234,34 @@ def fetch_page(url):
             if title else ""
         )
 
-        # Chercher d'abord article, sinon main.
-        main = soup.find("article") or soup.find("main")
+        # ====================================================
+        # ETAPE D : TROUVER LE CONTENU PRINCIPAL
+        # ====================================================
 
+        # Les documentations utilisent des structures
+        # HTML différentes selon leur générateur.
+
+        # Rechercher plusieurs conteneurs possibles.
+        main = (
+            soup.select_one("article")
+            or soup.select_one("main")
+            or soup.select_one("div.body[role='main']")
+            or soup.select_one("div[role='main']")
+            or soup.select_one("div.body")
+            or soup.select_one("#content")
+        )
+
+        # Si aucun conteneur n'a été trouvé.
         if main is None:
             print("Contenu principal introuvable.")
             return None
 
-        # Supprimer les éléments HTML secondaires.
+        # ====================================================
+        # ETAPE E : NETTOYER LE HTML
+        # ====================================================
+
+        # Supprimer les scripts, menus, pieds de page
+        # et certains sommaires.
         for element in main.select(
             "script, style, nav, footer, aside, "
             ".table-of-contents, .toc, "
@@ -211,7 +269,10 @@ def fetch_page(url):
         ):
             element.decompose()
 
-        # Créer une liste contenant les blocs de texte.
+        # ====================================================
+        # ETAPE F : EXTRAIRE LES BLOCS DE TEXTE
+        # ====================================================
+
         blocks = []
 
         # Récupérer les titres, paragraphes et blocs de code.
@@ -219,28 +280,40 @@ def fetch_page(url):
             ["h2", "h3", "p", "pre"]
         ):
 
-            # Préserver les lignes des blocs de code.
-            separator = "\n" if element.name == "pre" else " "
+            # Préserver les retours à la ligne du code.
+            separator = (
+                "\n" if element.name == "pre" else " "
+            )
 
-            # Extraire le texte sans les balises HTML.
-            text = element.get_text(separator, strip=True)
+            # Extraire le texte du bloc.
+            text = element.get_text(
+                separator,
+                strip=True
+            )
 
-            # Éviter les blocs vides ou certains éléments de sommaire.
+            # Ignorer les blocs vides et certains titres inutiles.
             if text and text.lower() not in {
                 "table of contents",
                 "skill level",
                 "time to complete"
             }:
+
                 blocks.append(text)
 
-        # Si aucun bloc n'est trouvé, utiliser le texte général.
+        # Si aucun bloc n'est détecté, récupérer
+        # le texte général du contenu principal.
         if not blocks:
-            blocks = [main.get_text(" ", strip=True)]
+            blocks = [
+                main.get_text(" ", strip=True)
+            ]
 
-        # Regrouper les blocs pour obtenir le contenu.
+        # Regrouper les blocs en un seul texte.
         content = "\n\n".join(blocks)
 
-        # Retourner la page sous forme de dictionnaire.
+        # ====================================================
+        # ETAPE G : RETOURNER LE DOCUMENT
+        # ====================================================
+
         return {
             "url": url,
             "title": title_text,
@@ -249,23 +322,24 @@ def fetch_page(url):
         }
 
     except requests.exceptions.RequestException as error:
-        # Gérer les problèmes de connexion et HTTP.
+
+        # Gérer les erreurs réseau et HTTP.
         print("Erreur de téléchargement :", error)
         return None
 
 
 # ============================================================
-# 4. EXTRAIRE LES PASSAGES PERTINENTS
+# 4. SELECTIONNER LES PASSAGES PERTINENTS
 # ============================================================
 
 def extract_section(page, question, max_passages=3):
 
-    # Vérifier que nous avons bien récupéré une page.
+    # Vérifier que le document existe.
     if not page:
         print("Aucune page à analyser.")
         return []
 
-    # Mots très fréquents qui aident peu à identifier un sujet.
+    # Mots fréquents à ignorer lors du classement.
     stop_words = {
         "how", "to", "the", "a", "an", "is", "are",
         "what", "with", "and", "for", "in", "of",
@@ -279,113 +353,119 @@ def extract_section(page, question, max_passages=3):
         re.findall(r"\w+", question.lower())
     )
 
-    # Supprimer les mots trop courts et peu significatifs.
+    # Supprimer les mots fréquents ou trop courts.
     question_words = {
         word for word in question_words
         if len(word) > 2 and word not in stop_words
     }
 
-    # Préparer une liste pour les passages pertinents.
+    # Liste des passages sélectionnés.
     matches = []
 
-    # Parcourir les blocs extraits par fetch_page().
+    # Parcourir les blocs de la documentation.
     for block in page["blocks"]:
 
-        # Transformer chaque bloc en ensemble de mots.
+        # Transformer le bloc en ensemble de mots.
         block_words = set(
             re.findall(r"\w+", block.lower())
         )
 
         # Compter les mots communs avec la question.
-        score = len(question_words.intersection(block_words))
+        score = len(
+            question_words.intersection(block_words)
+        )
 
-        # Conserver uniquement les blocs avec au moins un mot commun.
+        # Conserver les blocs ayant un score positif.
         if score > 0:
 
-            # Enregistrer le score et le passage.
             matches.append({
                 "score": score,
                 "text": block,
                 "url": page["url"]
             })
 
-    # Classer les passages du plus pertinent au moins pertinent.
+    # Classer les passages par pertinence lexicale.
     matches.sort(
         key=lambda item: item["score"],
         reverse=True
     )
 
-    # Retourner au maximum trois passages.
+    # Retourner les meilleurs passages.
     return matches[:max_passages]
 
 
 # ============================================================
-# 5. TEST DES TROIS FONCTIONS
+# 5. TESTER NOS TROIS FONCTIONS
 # ============================================================
 
 if __name__ == "__main__":
 
-    # Question utilisée pour notre test.
-    question = "How to build a Docker image using Dockerfile"
+    # Question de test.
+    question = "How to create a branch"
 
-    # Technologie choisie manuellement.
-    technology = "docker"
+    # Technologie choisie pour ce test isolé.
+    technology = "git"
 
-    # --------------------------------------
+    # --------------------------------------------------------
     # TEST 1 : SEARCH_DOCS
-    # --------------------------------------
+    # --------------------------------------------------------
 
     print("\n=== TEST 1 : RECHERCHE ===")
 
-    pages = search_docs(question, technology)
+    pages = search_docs(
+        question,
+        technology
+    )
 
+    # Afficher les résultats.
     for page in pages:
+
         print("\nTitre :", page["title"])
         print("URL :", page["url"])
 
-    # --------------------------------------
+    if not pages:
+        print("Aucune page officielle trouvée.")
+
+    # --------------------------------------------------------
     # TEST 2 : FETCH_PAGE
-    # --------------------------------------
+    # --------------------------------------------------------
 
     print("\n=== TEST 2 : SCRAPING ===")
 
-    # Page connue de la documentation Docker.
-    url = (
-        "https://docs.docker.com/get-started/"
-        "docker-concepts/building-images/"
-    )
+    # Page officielle Git.
+    url = "https://git-scm.com/docs/git-branch"
 
-    # Télécharger et analyser la page.
+    # Télécharger la documentation.
     document = fetch_page(url)
 
     if document:
 
-        # Afficher les informations récupérées.
         print("\nTitre :", document["title"])
         print("Nombre de blocs :", len(document["blocks"]))
 
-        # --------------------------------------
+        # ----------------------------------------------------
         # TEST 3 : EXTRACT_SECTION
-        # --------------------------------------
+        # ----------------------------------------------------
 
         print("\n=== TEST 3 : EXTRACTION PERTINENTE ===")
 
-        # Sélectionner les passages liés à notre question.
         passages = extract_section(
             document,
             question,
             max_passages=3
         )
 
-        # Afficher les passages sélectionnés.
-        for index, passage in enumerate(passages, start=1):
+        # Afficher les passages.
+        for index, passage in enumerate(
+            passages,
+            start=1
+        ):
 
             print(f"\nPassage {index}")
             print("Score :", passage["score"])
             print("Texte :", passage["text"][:600])
             print("Source :", passage["url"])
 
-        # Aucun passage correspondant à la question.
         if not passages:
             print("Aucun passage pertinent trouvé.")
 
